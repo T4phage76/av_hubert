@@ -202,6 +202,8 @@ class SequenceGenerator(nn.Module):
             ],
         )
         net_input = sample["net_input"]
+        all_lprobs = [] ######
+        all_attn = [] ######
 
         if "src_tokens" in net_input:
             src_tokens = net_input["src_tokens"]
@@ -338,7 +340,10 @@ class SequenceGenerator(nn.Module):
                 encoder_outs,
                 incremental_states,
                 self.temperature,
-            )
+            )    
+
+
+            all_attn.append(avg_attn_scores) ######
 
             if self.lm_model is not None:
                 lm_out = self.lm_model(tokens[:, : step + 1])
@@ -352,7 +357,7 @@ class SequenceGenerator(nn.Module):
 
             lprobs[:, self.pad] = -math.inf  # never select pad
             lprobs[:, self.unk] -= self.unk_penalty  # apply unk penalty
-
+            
             # handle max length constraint
             if step >= max_len:
                 lprobs[:, : self.eos] = -math.inf
@@ -378,6 +383,8 @@ class SequenceGenerator(nn.Module):
                         bsz * beam_size, avg_attn_scores.size(1), max_len + 2
                     ).to(scores)
                 attn[:, :, step + 1].copy_(avg_attn_scores)
+
+            all_lprobs.append(lprobs) ############
 
             scores = scores.type_as(lprobs)
             eos_bbsz_idx = torch.empty(0).to(
@@ -555,6 +562,7 @@ class SequenceGenerator(nn.Module):
 
         # sort by score descending
         for sent in range(len(finalized)):
+            all_lprobs = all_lprobs
             scores = torch.tensor(
                 [float(elem["score"].item()) for elem in finalized[sent]]
             )
@@ -563,7 +571,7 @@ class SequenceGenerator(nn.Module):
             finalized[sent] = torch.jit.annotate(
                 List[Dict[str, Tensor]], finalized[sent]
             )
-        return finalized
+        return finalized, all_lprobs, max_len, all_attn
 
     def _prefix_tokens(
         self, step: int, lprobs, scores, tokens, prefix_tokens, beam_size: int
